@@ -2,9 +2,9 @@
 
 A bulletproof, run-all-and-walk-away Colab notebook for training [openWakeWord](https://github.com/dscripka/openWakeWord) models in 2026.
 
-**Train your own custom wake word in ~75-90 minutes on Colab Pro. Two lines to edit, one button to press.**
+**Train your own custom wake word in ~75-90 minutes on Colab Pro. Three lines to edit, one button to press. Supports 36 languages via Piper TTS.**
 
-[![Open In Colab](https://colab.research.google.com/assets/colab-badge.svg)](https://colab.research.google.com/github/alfiedennen/openwakeword-colab-2026/blob/main/train_wakeword.ipynb)
+[![Open In Colab](https://colab.research.google.com/assets/colab-badge.svg)](https://colab.research.google.com/github/pafernanr/openwakeword-colab-2026/blob/main/train_wakeword.ipynb)
 
 ---
 
@@ -29,14 +29,15 @@ The `auto_train` upstream path keeps surfacing bugs against `mmap_batch_generato
 
 1. Click the **Open in Colab** badge above (or upload `train_wakeword.ipynb` to your own Colab).
 2. **Runtime → Change runtime type → L4 GPU + High RAM** (Colab Pro, $10/mo). Free T4 also works but is ~2× slower. A100 doesn't help — training is network/CPU-bound, not GPU-bound.
-3. **Cell 10 — edit two lines:**
+3. **Cell 0 — edit three lines:**
    ```python
    TARGET_PHRASE = ['mr graves', 'mister graves']   # what your wake word is
    MODEL_NAME    = 'mr_graves'                       # output filename + dirs
+   LANGUAGE      = 'en_US'                           # any Piper locale (36 languages)
    ```
 4. **Runtime → Run all**.
-5. Walk away ~75-90 min. The last cell auto-downloads `<MODEL_NAME>.onnx`.
-6. Drop the ONNX into your APK / on-device app's wakeword assets dir.
+5. Walk away ~75-90 min. The last cell auto-downloads `<MODEL_NAME>.onnx` and `<MODEL_NAME>.tflite`.
+6. Drop the model(s) into your APK / on-device app's wakeword assets dir.
 
 ## Validated example
 
@@ -65,27 +66,21 @@ The previous attempt — an over-simplified hand-rolled trainer that skipped mos
 
 ## What's in the notebook
 
-| Section | Cells | What |
+| Cell | Est. time | What |
 |---|---|---|
-| 1. Comprehensive install | 1-2 | apt + pip, with `piper-tts --no-deps` last so nothing clobbers the Py3.12-compatible `piper-phonemize-cross` |
-| 2. Clone repos + download model | 3-4 | piper-sample-generator pinned to flat-layout commit; libritts model with size-check redownload; openwakeword editable install with namespace-package fix |
-| 3. Apply runtime patches | 5-6 | 6 idempotent patches (torchaudio.set_audio_backend no-op, generate_samples copy, HF Hub timeouts, torchaudio.info shim, generate_samples model arg default, train.py val dtype cast) |
-| 4. Pre-flight | 7-8 | Hard-fails if any dep / file isn't ready. Catches future Colab regressions before any slow work |
-| 5. Shared models (mel+embedding) | 9-10 | openwakeword's pretrained mel-spectrogram + embedding ONNX downloads |
-| 6. MIT impulse responses | 11-12 | ~270 IRs for reverb augmentation |
-| 7. FMA + ACAV downloads | 13-14 | ~8 GB FMA small (background noise) + ~17 GB ACAV100M features (negative training corpus). Both with resume |
-| 8. FMA MP3 → 16 kHz mono WAV | 15-16 | 1500 conversions for audiomentations |
-| 9. Subsample ACAV | 17-18 | ~1.7 GB train slice + ~170 MB val slice (raw `(M, 96)`, NOT reshaped — trainer slides 16-frame window itself) |
-| 10. Build training config | 19-20 | **Edit `TARGET_PHRASE` + `MODEL_NAME` here** |
-| 11. Generate Piper TTS clips | 21-22 | Idempotent — re-running skips cached dirs. Verifies all 4 dirs (positive_train/test, negative_train/test) |
-| 12. Resample 22050 → 16000 Hz | 23-24 | Piper's libritts model outputs at 22050 Hz native; openwakeword expects 16000 |
-| 13. Augment + featurise | 25-26 | Outputs `(N, 16, 96)` feature .npy files |
-| 14. Hand-rolled trainer | 27-28 | The interesting bit — read the comments |
-| 15. Ensemble + ONNX export + download | 29-30 | 90/90/10 percentile filter, average qualified state_dicts, sigmoid-baked ONNX, browser download |
+| **0. Config** | instant | **Edit `TARGET_PHRASE`, `MODEL_NAME`, and `LANGUAGE`** |
+| **1. Install** | ~2 min | apt + pip in correct order; `piper-phonemize-cross` first, `piper-tts --no-deps` last, `piper-sample-generator` v3+ for multilingual |
+| **2. Clone + voices + patches** | ~2 min | Clone openwakeword, download TTS voices (libritts .pt for en_US, auto-discovered .onnx for 35 other languages), apply 5 runtime patches |
+| **3. Pre-flight** | instant | Hard-fails if any dep/file is missing — gate before slow downloads |
+| **4. Download data** | ~15 min | Embedding models + MIT impulse responses + FMA music + ACAV features. All with resume |
+| **5. Prepare audio** | ~6 min | FMA MP3 → 16 kHz WAV conversion + ACAV subsample (1.7 GB train + 170 MB val) |
+| **6. Config + clips** | ~15 min | Build training YAML, patch deep-phonemizer, generate TTS clips, resample to 16 kHz |
+| **7. Augment + train** | ~40 min | Augment with noise/reverb, extract features, 3-stage training with FP/hour validation |
+| **8. Export + download** | ~1 min | Ensemble checkpoints, export ONNX + TFLite, verify, browser download |
 
 ## What can go wrong (and how to fix)
 
-**Recall too low (<18/20 fires)?** Bump `n_samples` in cell 20 to 5000. Or set `target_recall` from 0.5 to 0.7. Or add `augmentation_rounds: 2` for more variety per positive clip.
+**Recall too low (<18/20 fires)?** Bump `n_samples` in cell 6 to 5000. Or set `target_recall` from 0.5 to 0.7. Or add `augmentation_rounds: 2` for more variety per positive clip.
 
 **FP rate too high (>1 phantom per 30 min real-life)?** Bump `max_negative_weight` from 1500 → 3000. Or record 30 min of YOUR target ambient (TV, your speaker setup, your kitchen) and append features to `acav_val_subset.npy` so the trainer's FP/hour metric reflects what matters to you.
 
@@ -101,7 +96,7 @@ The previous attempt — an over-simplified hand-rolled trainer that skipped mos
 
 - **Wake word phrases matter.** A 2-syllable phrase that sounds like nothing in English (`mr graves` works because "graves" is uncommon in everyday speech) generalizes way better than a common word ("hello", "play", "stop"). Pick something that's not in your normal vocabulary.
 - **The model is binary.** All entries in `TARGET_PHRASE` activate the same single output. You can't train one model with multiple distinct wake words; you'd train multiple ONNX files and run them in parallel.
-- **Single-language**: Piper TTS generates English-accented audio. For non-English wake words you'd need a Piper voice trained in that language (and probably a different `piper_sample_generator` model — see the upstream piper-sample-generator releases page).
+- **Multilingual but not polyglot.** Each training run targets one language. Set `LANGUAGE` to any Piper locale (`es_ES`, `de_DE`, `fr_FR`, etc.) and the notebook auto-downloads matching voices. But a model trained on Spanish clips won't fire on the same phrase spoken with an English accent — train one model per language you need.
 
 ## License
 
